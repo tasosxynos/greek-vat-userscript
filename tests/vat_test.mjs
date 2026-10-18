@@ -7,9 +7,10 @@ const src = fs.readFileSync(SRC, 'utf8');
 const m = src.match(/\/\/ #region pure([\s\S]*?)\/\/ #endregion pure/);
 if (!m) { console.error('pure region not found in', SRC.pathname); process.exit(2); }
 
-const { parseAmount, r2, fmtEUR, fmtPlain, blocks, EU, TOP, isShopHost } = new Function(
-  m[1] + '\nreturn { parseAmount, r2, fmtEUR, fmtPlain, blocks, EU, TOP, isShopHost };'
+const { parseAmount, r2, fmtEUR, fmtPlain, blocks, EU, TOP, DEFAULT_SITES, normSite, parseSites, siteMatches, amountFromText } = new Function(
+  m[1] + '\nreturn { parseAmount, r2, fmtEUR, fmtPlain, blocks, EU, TOP, DEFAULT_SITES, normSite, parseSites, siteMatches, amountFromText };'
 )();
+const isShopHost = (h) => siteMatches(h, DEFAULT_SITES);
 
 let pass = 0, fail = 0;
 const num = (x) => (Number.isNaN(x) ? 'NaN' : x);
@@ -98,7 +99,7 @@ eqs('SK 23',          byCc.SK[2], 23);
 eqs('HU highest (27)', Math.max(...EU.map((c) => c[2])), 27);
 eqs('LU lowest (17)',  Math.min(...EU.map((c) => c[2])), 17);
 
-// ── e-shop detection ────────────────────────────────────────────────────────
+// ── site list (default = e-shops) ────────────────────────────────────────────────────────
 eqs('shop www.skroutz.gr',    isShopHost('www.skroutz.gr'), true);
 eqs('shop bestprice.gr',      isShopHost('bestprice.gr'), true);
 eqs('shop www.e-shop.gr',     isShopHost('www.e-shop.gr'), true);
@@ -118,6 +119,35 @@ eqs('not shop amazonia.com',  isShopHost('amazonia.com'), false);
 eqs('not shop my-amazon.de',  isShopHost('my-amazon.de'), false);
 eqs('not shop empty',         isShopHost(''), false);
 eqs('not shop undefined',     isShopHost(undefined), false);
+
+// ── user site list: normalisation / parsing ─────────────────────────────────
+eqs('norm full URL',        normSite('https://www.Skroutz.gr/c/12?x=1#a'), 'skroutz.gr');
+eqs('norm port',            normSite('localhost:8080'), 'localhost');
+eqs('norm wildcard',        normSite('*.example.com'), 'example.com');
+eqs('norm brand. kept',     normSite('amazon.'), 'amazon.');
+eqs('norm blank',           normSite('   '), '');
+eqs('parse lines/commas',   parseSites('skroutz.gr\n https://www.amazon.de/x , ebay.\n\n').join('|'), 'skroutz.gr|amazon.de|ebay.');
+eqs('parse comments',       parseSites('# my shops\nshop.gr  # the good one').join('|'), 'shop.gr');
+eqs('parse dedupe',         parseSites('a.gr\nwww.a.gr\nA.GR').join('|'), 'a.gr');
+eqs('match subdomain',      siteMatches('m.shop.gr', ['shop.gr']), true);
+eqs('match pasted URL',     siteMatches('www.shop.gr', ['https://shop.gr/']), true);
+eqs('no match lookalike',   siteMatches('myshop.gr', ['shop.gr']), false);
+eqs('no match empty list',  siteMatches('shop.gr', []), false);
+eqs('regex chars escaped',  siteMatches('axb.com', ['a+b.com']), false);
+
+// ── price from selected page text (Alt+Q with a selection) ──────────────────
+eq('sel plain price',        amountFromText('1.299,00 €'), 1299);
+eq('sel with label',         amountFromText('Τιμή: 1.299,00 €'), 1299);
+eq('sel currency wins',      amountFromText('2 x 19,99€'), 19.99);
+eq('sel installments',       amountFromText('3 άτοκες δόσεις των 433,00 €'), 433);
+eq('sel US format',          amountFromText('€1,299.00'), 1299);
+eq('sel first of two',       amountFromText('Αρχική 1.499,00 € Τελική 1.299,00 €'), 1499);
+eq('sel space thousands',    amountFromText('12 345 EUR'), 12345);
+eq('sel no currency',        amountFromText('24,90'), 24.9);
+eq('sel long digits',        amountFromText('12345,67'), 12345.67);
+eq('sel nbsp before €',      amountFromText('89,90\u00A0€'), 89.9);
+eq('sel no number',          amountFromText('Προσθήκη στο καλάθι'), NaN);
+eq('sel empty',              amountFromText(''), NaN);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
